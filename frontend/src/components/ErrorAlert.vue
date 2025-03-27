@@ -1,15 +1,15 @@
 <template>
-  <div v-if="error" class="glass-effect border-l-4 border-red-500 p-4 mb-8 rounded-xl">
-    <div class="flex">
+  <div v-if="error" class="glass-effect p-4 mb-6 rounded-xl relative overflow-hidden">
+    <div class="neon-border absolute inset-0 opacity-30" style="border-color: #ef4444;"></div>
+    <div class="flex z-10 relative">
       <div class="flex-shrink-0">
-        <svg class="h-6 w-6 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-        </svg>
+        <div class="w-4 h-4 rounded-full bg-red-500 animate-pulse"></div>
       </div>
       <div class="ml-3">
-        <p class="text-base text-red-600">{{ error }}</p>
+        <p class="text-base text-red-400 sci-fi-font">{{ error }}</p>
       </div>
     </div>
+    <div class="absolute right-0 top-0 h-full w-16" style="background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.2));"></div>
   </div>
 </template>
 
@@ -20,4 +20,15 @@ defineProps({
     default: ''
   }
 })
-</script> 
+</script>
+
+<style scoped>
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.animate-pulse {
+  animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+</style> 

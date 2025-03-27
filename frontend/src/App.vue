@@ -1,28 +1,55 @@
 <template>
   <!-- 修改最外层容器 -->
-  <div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 relative">
-    <!-- 动态背景 - 调整z-index -->
-    <div class="tech-grid absolute inset-0 z-0"></div>
+  <div class="min-h-screen">
+    <!-- 背景层 -->
+    <div class="stars-background"></div>
+    <div class="earth-background"></div>
+    <div class="earth-atmosphere"></div>
+    <div class="earth-grid"></div>
+    <div class="tech-grid"></div>
+    <div class="cyber-particles"></div>
     
-    <!-- 主要内容 - 确保在背景之上 -->
-    <main class="relative z-10 min-h-[calc(100vh-4rem)] py-8">
-      <div class="container mx-auto px-4 max-w-4xl">
-        <Header />
-        
-        <InputSection 
-          :is-loading="isLoading"
-          @generate="handleGenerate"
-          @load-example="handleLoadExample"
-        />
+    <!-- 科技线条装饰 -->
+    <div class="tech-line" style="top: 80px;"></div>
+    <div class="tech-line" style="bottom: 40px;"></div>
+    
+    <!-- 主要内容 -->
+    <main class="min-h-screen flex flex-col">
+      <!-- 顶部导航 -->
+      <Header class="z-20" />
+      
+      <!-- 主要内容区域 -->
+      <div class="flex-1 container mx-auto px-6 py-8 z-10">
+        <el-card class="box-card glass-effect">
+          <template #header>
+            <div class="flex items-center">
+              <span class="text-lg neon-text sci-fi-font">系统架构描述</span>
+            </div>
+          </template>
 
-        <ErrorAlert :error="error" />
-        
-        <LoadingSpinner :is-loading="isLoading" />
-        
-        <DiagramResult 
-          :diagram-html="diagramHtml"
-          @error="handleError"
-        />
+          <!-- 输入和结果区域 -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- 左侧输入区域 -->
+            <div>
+              <InputSection 
+                :is-loading="isLoading"
+                v-model="description"
+                @generate="handleGenerate"
+                @load-example="handleLoadExample"
+              />
+            </div>
+            
+            <!-- 右侧结果区域 -->
+            <div class="space-y-6">
+              <ErrorAlert :error="error" />
+              <LoadingSpinner :is-loading="isLoading" />
+              <DiagramResult 
+                :diagram-html="diagramHtml"
+                @error="handleError"
+              />
+            </div>
+          </div>
+        </el-card>
       </div>
     </main>
     
@@ -41,6 +68,7 @@ import DiagramResult from './components/DiagramResult.vue'
 const diagramHtml = ref('')
 const isLoading = ref(false)
 const error = ref('')
+const description = ref('')
 
 const handleGenerate = async (description) => {
   if (!description.trim()) {
@@ -78,7 +106,7 @@ const handleLoadExample = (type) => {
 - 缓存: 使用Redis缓存热点数据
 - 消息队列: 使用RabbitMQ处理异步任务`
   }
-  emit('update:description', examples[type])
+  description.value = examples[type]
 }
 
 const handleError = (message) => {
@@ -97,16 +125,16 @@ const handleError = (message) => {
 }
 
 .diagram-content::-webkit-scrollbar-track {
-  background: rgba(17, 24, 39, 0.1);
+  background: rgba(15, 23, 42, 0.7);
   border-radius: 4px;
 }
 
 .diagram-content::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.5);
+  background: rgba(56, 189, 248, 0.7);
   border-radius: 4px;
 }
 
 .diagram-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.7);
+  background: rgba(56, 189, 248, 1);
 }
 </style>

@@ -61,18 +61,19 @@ def call_deepseek_api(prompt: str, api_key: str):
 async def generate_diagram(request: DiagramRequest):
     try:
         # 构建提示词
-        prompt = f"""请根据以下系统架构描述生成一个美观的HTML架构图。
+        prompt = f"""请根据以下系统架构描述生成一个美观的架构图的HTML代码。
         要求：
-        1. 使用HTML和CSS创建一个清晰的架构图
-        2. 符合微服务框架合理分层
+        1. 只生成<div>内的内容，不要包含完整的HTML文档结构
+        2. 使用CSS创建一个清晰的架构图
         3. 使用合适的颜色和布局
-        4. 包含组件之间的连接关系
+        4. 包含组件之间的层级关系
         5. 使用响应式设计，确保在不同屏幕尺寸下都能正常显示
+        6. 不要包含任何注释或多余的标记
         
         系统架构描述：
         {request.description}
         
-        请只返回HTML代码，不要包含任何其他文本。"""
+        请只返回<div>内的HTML代码，不要包含完整的HTML文档结构，也不要包含任何其他文本。"""
 
         # 获取API密钥
         api_key = os.getenv('DEEPSEEK_API_KEY')
