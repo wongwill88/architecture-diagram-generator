@@ -57,8 +57,11 @@ const handleGenerate = async (description) => {
     background: 'rgba(0, 0, 0, 0.7)'
   })
   
+  console.log('Sending request to:', 'http://localhost:8001/generate-diagram')
+  console.log('Request data:', { description })
+  
   try {
-    const response = await fetch('http://localhost:8001/generate-diagram', {
+    const response = await fetch('/api/generate-diagram', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -66,8 +69,12 @@ const handleGenerate = async (description) => {
       body: JSON.stringify({ description })
     })
     
+    console.log('Response status:', response.status)
+    
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const errorText = await response.text()
+      console.error('Error response:', errorText)
+      throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`)
     }
     
     const data = await response.json()
@@ -75,7 +82,7 @@ const handleGenerate = async (description) => {
     ElMessage.success('架构图生成成功')
   } catch (error) {
     console.error('Error generating diagram:', error)
-    ElMessage.error('生成架构图失败，请重试')
+    ElMessage.error(`生成架构图失败: ${error.message}`)
   } finally {
     isLoading.value = false
     loadingInstance.close()

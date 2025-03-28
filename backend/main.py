@@ -1,24 +1,26 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-import requests
+from pydantic import BaseModel
+import httpx
 import os
+import asyncio
 from dotenv import load_dotenv
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
+import re
+
+# 加载环境变量
+load_dotenv()
 
 # 配置日志
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 app = FastAPI()
 
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],  # 在生产环境中应该限制为前端域名
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,71 +29,151 @@ app.add_middleware(
 class DiagramRequest(BaseModel):
     description: str
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-    reraise=True
-)
-def call_deepseek_api(prompt: str, api_key: str):
-    response = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.7
-        },
-        timeout=60  # 增加超时时间到60秒
-    )
-    
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"AI服务调用失败: {response.text}"
-        )
-    
-    return response.json()
-
-@app.post("/api/generate-diagram")
+# 确保路由定义正确
+@app.post("/generate-diagram")
 async def generate_diagram(request: DiagramRequest):
     try:
-        # 构建提示词
-        prompt = f"""请根据以下系统架构描述生成一个美观的架构图的HTML代码。
-        要求：
-        1. 只生成<div>内的内容，不要包含完整的HTML文档结构
-        2. 使用CSS创建一个清晰的架构图
-        3. 使用合适的颜色和布局
-        4. 包含组件之间的层级关系
-        5. 使用响应式设计，确保在不同屏幕尺寸下都能正常显示
-        6. 不要包含任何注释或多余的标记
-        
-        系统架构描述：
-        {request.description}
-        
-        请只返回<div>内的HTML代码，不要包含完整的HTML文档结构，也不要包含任何其他文本。"""
-
-        # 获取API密钥
-        api_key = os.getenv('DEEPSEEK_API_KEY')
-        if not api_key:
-            logger.error("DEEPSEEK_API_KEY not found in environment variables")
-            raise HTTPException(status_code=500, detail="API key not configured")
-
-        logger.debug(f"Making request to DeepSeek API with prompt: {prompt}")
-        
-        # 调用DeepSeek API
-        result = call_deepseek_api(prompt, api_key)
-        html_content = result["choices"][0]["message"]["content"]
-        
-        return {"html": html_content}
-            
+        logger.info(f"Received request with description: {request.description[:50]}...")
+        html = await generate_diagram_html(request.description)
+        return {"html": html}
     except Exception as e:
         logger.error(f"Error generating diagram: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+# 添加一个别名路由，以防前端使用不同的路径
+@app.post("/generate")
+async def generate(request: DiagramRequest):
+    return await generate_diagram(request)
+
+async def generate_diagram_html(description: str):
+    max_attempts = 3
+    wait_seconds = 2
+    
+    for attempt in range(max_attempts):
+        try:
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            if not api_key:
+                logger.error("DEEPSEEK_API_KEY not found in environment variables")
+                raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
+            
+            logger.info(f"Making request to DeepSeek API (attempt {attempt + 1}/{max_attempts})...")
+            
+            prompt = """
+            请根据以下系统架构描述，生成一个美观的架构图的HTML代码。
+            使用mermaid.js语法，风格要简洁现代。
+
+            系统架构描述:
+            """ + description + """
+
+            请只返回可以直接嵌入网页的HTML代码，包含完整的mermaid.js引用和图表定义。
+            HTML代码应该包含以下元素:
+            1. mermaid.js的CDN引用
+            2. 一个带有'mermaid'类的div元素，其中包含图表定义
+            3. 初始化mermaid的脚本
+
+            示例格式:
+            ```html
+            <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+            <script>
+              mermaid.initialize({
+                startOnLoad: true,
+                theme: 'default'
+              });
+            </script>
+            <div class="mermaid">
+              graph TD
+                A[前端] --> B[后端]
+                B --> C[数据库]
+            </div>
+            ```
+
+            不要包含任何解释或其他文本，只返回HTML代码。
+            """
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                logger.info("Sending request to DeepSeek API...")
+                response = await client.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful assistant that generates architecture diagrams using mermaid.js."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 4000
+                    }
+                )
+                
+                logger.info(f"DeepSeek API response status: {response.status_code}")
+                
+                if response.status_code != 200:
+                    error_text = response.text
+                    logger.error(f"API error: {response.status_code} {error_text}")
+                    raise HTTPException(status_code=response.status_code, detail=error_text)
+                
+                data = response.json()
+                logger.info("Successfully received response from DeepSeek API")
+                html_content = data["choices"][0]["message"]["content"]
+                
+                # 清理HTML，确保它只包含必要的代码
+                html_content = html_content.replace("```html", "").replace("```", "").strip()
+                
+                # 构建一个完整的、安全的HTML
+                safe_html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+                    <script>
+                        document.addEventListener('DOMContentLoaded', function() {
+                            mermaid.initialize({
+                                startOnLoad: true,
+                                theme: 'default'
+                            });
+                        });
+                    </script>
+                </head>
+                <body>
+                """
+                
+                # 尝试提取mermaid图表定义
+                import re
+                mermaid_div = re.search(r'<div\s+class=["\']mermaid["\'][^>]*>(.*?)</div>', html_content, re.DOTALL)
+                
+                if mermaid_div:
+                    # 如果找到了mermaid div，直接使用它
+                    safe_html += mermaid_div.group(0)
+                else:
+                    # 否则尝试提取图表定义
+                    graph_match = re.search(r'(graph\s+[A-Z]+.+|flowchart\s+[A-Z]+.+|sequenceDiagram.+|classDiagram.+)', html_content, re.DOTALL)
+                    if graph_match:
+                        graph_def = graph_match.group(0)
+                        safe_html += '<div class="mermaid">\n' + graph_def + '\n</div>'
+                    else:
+                        # 如果无法提取，使用原始内容
+                        safe_html += '<div class="mermaid">\n' + html_content + '\n</div>'
+                
+                safe_html += """
+                </body>
+                </html>
+                """
+                
+                logger.info("Processed HTML content for diagram")
+                return safe_html
+                
+        except Exception as e:
+            logger.error(f"Error in generate_diagram_html (attempt {attempt + 1}/{max_attempts}): {str(e)}", exc_info=True)
+            if attempt < max_attempts - 1:
+                logger.info(f"Retrying in {wait_seconds} seconds...")
+                await asyncio.sleep(wait_seconds)
+            else:
+                logger.error("Max retry attempts reached, giving up")
+                raise
 
 @app.get("/health")
 async def health_check():
