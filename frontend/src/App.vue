@@ -1,66 +1,84 @@
 <template>
-  <!-- 修改最外层容器 -->
-  <div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 relative">
-    <!-- 动态背景 - 调整z-index -->
-    <div class="tech-grid absolute inset-0 z-0"></div>
-    
-    <!-- 主要内容 - 确保在背景之上 -->
-    <main class="relative z-10 min-h-[calc(100vh-4rem)] py-8">
-      <div class="container mx-auto px-4 max-w-4xl">
-        <Header />
-        
-        <InputSection 
-          :is-loading="isLoading"
-          @generate="handleGenerate"
-          @load-example="handleLoadExample"
-        />
-
-        <ErrorAlert :error="error" />
-        
-        <LoadingSpinner :is-loading="isLoading" />
-        
-        <DiagramResult 
-          :diagram-html="diagramHtml"
-          @error="handleError"
-        />
-      </div>
-    </main>
-    
+  <div class="app-container">
+    <el-container>
+      <el-header height="80px">
+        <div class="header-content">
+          <h1 class="app-title">架构图生成器</h1>
+          <p class="app-subtitle">基于AI的系统架构图可视化工具</p>
+        </div>
+      </el-header>
+      
+      <el-main>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <InputSection 
+              :is-loading="isLoading"
+              :example-text="exampleText"
+              @generate="handleGenerate"
+              @load-example="handleLoadExample"
+            />
+          </el-col>
+          <el-col :span="12">
+            <OutputSection 
+              :diagram-html="diagramHtml" 
+              :is-loading="isLoading"
+            />
+          </el-col>
+        </el-row>
+      </el-main>
+      
+      <el-footer height="60px">
+        <p>© 2023 架构图生成器 | 使用 Vue.js + Element Plus + DeepSeek API 构建</p>
+      </el-footer>
+    </el-container>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-import axios from 'axios'
-import Header from './components/Header.vue'
+import { ElMessage, ElLoading } from 'element-plus'
 import InputSection from './components/InputSection.vue'
-import ErrorAlert from './components/ErrorAlert.vue'
-import LoadingSpinner from './components/LoadingSpinner.vue'
-import DiagramResult from './components/DiagramResult.vue'
+import OutputSection from './components/OutputSection.vue'
 
 const diagramHtml = ref('')
 const isLoading = ref(false)
-const error = ref('')
+const exampleText = ref('')
 
 const handleGenerate = async (description) => {
   if (!description.trim()) {
-    error.value = '请输入系统架构描述'
+    ElMessage.warning('请输入系统架构描述')
     return
   }
-
+  
   isLoading.value = true
-  error.value = ''
-  diagramHtml.value = ''
-
+  const loadingInstance = ElLoading.service({
+    lock: true,
+    text: '正在生成架构图...',
+    background: 'rgba(0, 0, 0, 0.7)'
+  })
+  
   try {
-    const response = await axios.post('/api/generate', {
-      description: description
+    const response = await fetch('http://localhost:8001/generate-diagram', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ description })
     })
-    diagramHtml.value = response.data.html
-  } catch (err) {
-    error.value = '生成架构图时出错：' + (err.response?.data?.detail || err.message)
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const data = await response.json()
+    diagramHtml.value = data.html
+    ElMessage.success('架构图生成成功')
+  } catch (error) {
+    console.error('Error generating diagram:', error)
+    ElMessage.error('生成架构图失败，请重试')
   } finally {
     isLoading.value = false
+    loadingInstance.close()
   }
 }
 
@@ -78,35 +96,52 @@ const handleLoadExample = (type) => {
 - 缓存: 使用Redis缓存热点数据
 - 消息队列: 使用RabbitMQ处理异步任务`
   }
-  emit('update:description', examples[type])
-}
-
-const handleError = (message) => {
-  error.value = message
+  exampleText.value = examples[type]
 }
 </script>
-<style>
-.diagram-content {
-  max-width: 100%;
-  overflow-x: auto;
+
+<style scoped>
+.app-container {
+  min-height: 100vh;
+  background-color: #f5f7fa;
 }
 
-/* 自定义滚动条样式 */
-.diagram-content::-webkit-scrollbar {
-  height: 8px;
+.el-header {
+  background-color: #409EFF;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
-.diagram-content::-webkit-scrollbar-track {
-  background: rgba(17, 24, 39, 0.1);
-  border-radius: 4px;
+.header-content {
+  text-align: center;
 }
 
-.diagram-content::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.5);
-  border-radius: 4px;
+.app-title {
+  margin: 0;
+  font-size: 28px;
 }
 
-.diagram-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.7);
+.app-subtitle {
+  margin: 5px 0 0;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.el-main {
+  padding: 20px;
+}
+
+.el-footer {
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid #e4e7ed;
+  background-color: white;
 }
 </style>

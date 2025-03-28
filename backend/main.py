@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import requests
 import os
 from dotenv import load_dotenv
@@ -57,7 +57,7 @@ def call_deepseek_api(prompt: str, api_key: str):
     
     return response.json()
 
-@app.post("/api/generate")
+@app.post("/api/generate-diagram")
 async def generate_diagram(request: DiagramRequest):
     try:
         # 构建提示词
@@ -93,6 +93,10 @@ async def generate_diagram(request: DiagramRequest):
         logger.error(f"Error generating diagram: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8001) 
