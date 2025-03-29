@@ -1,13 +1,370 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>架构图生成器</title>
+    <title>Architecture Diagram Generator</title>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .input-section {
+            margin-bottom: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            resize: vertical;
+        }
+        .file-upload {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .file-upload:hover {
+            border-color: #666;
+            background-color: #f9f9f9;
+        }
+        .file-upload.dragover {
+            border-color: #4CAF50;
+            background-color: #E8F5E9;
+        }
+        .file-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .loading.active {
+            display: block;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            color: #f44336;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #ffebee;
+            border-radius: 4px;
+            display: none;
+        }
+        .error.active {
+            display: block;
+        }
+        #diagram-container {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 200px;
+            background: white;
+            overflow: auto;
+            position: relative;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            color: #666;
+        }
+        .tab.active {
+            color: #4CAF50;
+            border-bottom: 2px solid #4CAF50;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .button-group {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .download-button {
+            background-color: #2196F3;
+        }
+        .download-button:hover {
+            background-color: #1976D2;
+        }
+        #download-link {
+            display: none;
+        }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+    <div class="container">
+        <h1>Architecture Diagram Generator</h1>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('text')">Text Input</button>
+            <button class="tab" onclick="switchTab('file')">File Upload</button>
+        </div>
+
+        <div id="text-tab" class="tab-content active">
+            <div class="input-section">
+                <textarea id="description" placeholder="Describe your system architecture..."></textarea>
+                <div class="button-group">
+                    <button onclick="generateDiagram()">Generate Diagram</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="file-tab" class="tab-content">
+            <div class="file-upload" id="dropZone">
+                <p>Drag and drop a file here or click to select</p>
+                <input type="file" id="fileInput" style="display: none" accept=".txt,.md,.pdf,.doc,.docx">
+                <div class="file-info" id="fileInfo"></div>
+            </div>
+            <div class="button-group">
+                <button onclick="uploadFile()" id="uploadButton" disabled>Upload and Generate</button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Generating diagram...</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div id="diagram-container"></div>
+        
+        <div class="button-group" id="download-group" style="display: none;">
+            <button class="download-button" onclick="downloadDiagram()">Download as Image</button>
+        </div>
+        
+        <a id="download-link"></a>
+    </div>
+
+    <script>
+        let selectedFile = null;
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            document.querySelector(`.tab[onclick="switchTab('${tabName}')"]`).classList.add('active');
+        }
+
+        // File upload handling
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const uploadButton = document.getElementById('uploadButton');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelect(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+
+        function handleFileSelect(file) {
+            selectedFile = file;
+            fileInfo.textContent = `Selected file: ${file.name}`;
+            uploadButton.disabled = false;
+        }
+
+        async function uploadFile() {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                showLoading();
+                const response = await fetch('http://localhost:8001/upload-document', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to upload file');
+                }
+
+                const data = await response.json();
+                displayDiagram(data.html);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function generateDiagram() {
+            const description = document.getElementById('description').value.trim();
+            if (!description) {
+                showError('Please enter a system description');
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('http://localhost:8001/generate-diagram', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ description })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate diagram');
+                }
+
+                const data = await response.json();
+                displayDiagram(data.html);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayDiagram(html) {
+            const container = document.getElementById('diagram-container');
+            container.innerHTML = html;
+            document.getElementById('download-group').style.display = 'flex';
+        }
+
+        async function downloadDiagram() {
+            try {
+                showLoading();
+                const container = document.getElementById('diagram-container');
+                
+                // 创建canvas
+                const canvas = await html2canvas(container, {
+                    scale: 2, // 提高图片质量
+                    useCORS: true,
+                    backgroundColor: '#ffffff'
+                });
+                
+                // 转换为图片
+                const image = canvas.toDataURL('image/png');
+                
+                // 创建下载链接
+                const link = document.getElementById('download-link');
+                link.href = image;
+                link.download = 'architecture-diagram.png';
+                link.click();
+                
+                hideLoading();
+            } catch (error) {
+                showError('Failed to download diagram');
+                hideLoading();
+            }
+        }
+
+        function showLoading() {
+            document.getElementById('loading').classList.add('active');
+            document.getElementById('error').classList.remove('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('active');
+        }
+
+        function showError(message) {
+            const errorElement = document.getElementById('error');
+            errorElement.textContent = message;
+            errorElement.classList.add('active');
+        }
+    </script>
   </body>
 </html> 

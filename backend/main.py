@@ -1,13 +1,17 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
-import asyncio
 from dotenv import load_dotenv
 import logging
+import asyncio
+from typing import Optional, List
+import PyPDF2
+import docx
+import markdown
 import re
-from enum import Enum
+import io
 
 # 加载环境变量
 load_dotenv()
@@ -16,320 +20,328 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class DiagramType(str, Enum):
-    ARCHITECTURE = "architecture"
-    SEQUENCE = "sequence"
-    FLOWCHART = "flowchart"
-    USECASE = "usecase"
-    ER = "er"
-    CLASS = "class"
+# 配置常量
+MAX_RETRIES = 3
+INITIAL_TIMEOUT = 120  # 初始超时时间（秒）
+MAX_TIMEOUT = 180    # 最大超时时间（秒）
 
 class DiagramRequest(BaseModel):
-    type: DiagramType
     description: str
+
+class DocumentAnalysisRequest(BaseModel):
+    content: str
+    doc_type: str = "text"  # text, markdown, pdf, docx
 
 app = FastAPI()
 
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中应该限制为前端域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-DIAGRAM_PROMPTS = {
-    DiagramType.ARCHITECTURE: """
-    请根据以下系统描述生成一个架构图的Mermaid.js代码。
+# 文档分析提示词
+DOCUMENT_ANALYSIS_PROMPT = '''
+Analyze the following document content and extract system architecture information:
 
-    系统描述:
-    {description}
+{content}
 
-    要求：
-    1. 使用flowchart LR（从左到右）布局
-    2. 使用以下语法：
-       - 使用[方框]表示主要组件
-       - 使用([圆角框])表示服务
-       - 使用[(圆柱体)]表示数据库
-       - 使用>六边形]表示外部系统
-    3. 使用subgraph对相关组件进行分组
-    4. 使用合适的连接线和说明文字
+Please identify:
+1. Main system components
+2. Component relationships
+3. Data flows
+4. External integrations
+5. Key technologies used
 
-    示例：
-    flowchart LR
-        subgraph Frontend
-            A[Web App]
-        end
-        subgraph Backend
-            B([API Server])
-            C[(Database)]
-        end
-        A -->|HTTP| B
-        B -->|Query| C
-    """,
-    
-    DiagramType.SEQUENCE: """
-    请根据以下描述生成一个时序图的Mermaid.js代码。
+Format the response as a concise system description suitable for architecture diagram generation.
+'''
 
-    描述:
-    {description}
+ARCHITECTURE_PROMPT = '''
+Generate a professional system architecture diagram in HTML with clear hierarchical structure. Output ONLY the diagram HTML code.
 
-    要求：
-    1. 使用sequenceDiagram语法
-    2. 清晰展示参与者之间的交互顺序
-    3. 使用适当的箭头类型（->>, -->, -x）
-    4. 添加必要的说明文字
-    5. 使用activate/deactivate表示活动状态
+System Description:
+{description}
 
-    示例：
-    sequenceDiagram
-        participant U as User
-        participant F as Frontend
-        participant B as Backend
+Styling Guide:
+1. Container Structure:
+- Use nested flex containers for each layer
+- Main container: flex-direction: column
+- Layer containers: flex-direction: row
+- Gap between layers: 60px
+- Gap between components in same layer: 40px
+- Minimum height: 500px
+- System font stack
+- Clean white background
+
+2. Layer Styles:
+- Each layer should have a distinct background color
+- Layer labels: 16px, 600 weight, #2c3e50
+- Layer padding: 20px
+- Layer border-radius: 12px
+- Layer margin-bottom: 20px
+
+3. Component Styles:
+- Minimum width: 160px
+- Minimum height: 100px
+- Padding: 20px
+- Centered content
+- Smooth transitions
+- Subtle hover effects
+- Box-shadow: 0 4px 6px rgba(0,0,0,0.1)
+
+4. Layer-specific Colors:
+Frontend Layer:
+- Background: #F5F9FF
+- Components:
+  - Gradient: #E3F2FD to #BBDEFB
+  - Border: #90CAF9
+  - Rounded corners: 8px
+
+Application Layer:
+- Background: #F5FFF5
+- Components:
+  - Gradient: #E8F5E9 to #C8E6C9
+  - Border: #81C784
+  - Rounded corners: 12px
+
+Data Layer:
+- Background: #F5F5F5
+- Components:
+  - Gradient: #ECEFF1 to #CFD8DC
+  - Border: #B0BEC5
+  - Bottom shadow effect
+
+External Layer:
+- Background: #FFF5FF
+- Components:
+  - Gradient: #F3E5F5 to #E1BEE7
+  - Border: #CE93D8
+  - Hexagonal shape
+
+5. Connection Styles:
+- Use arrows (→) between components
+- Arrow color: #78909C
+- Arrow size: 24px
+- Arrow spacing: 20px
+- Vertical connections: ↓
+- Diagonal connections: ↘ or ↙
+
+6. Typography:
+- Component titles: 14px, 600 weight
+- Component descriptions: 12px, normal weight
+- Layer labels: 16px, 600 weight
+- Arrow symbols: 24px, light weight
+
+7. Layout Rules:
+- Components should be grouped by their layer
+- Each layer should be clearly labeled
+- Use arrows to show relationships between layers
+- Maintain consistent spacing
+- Ensure components are properly aligned
+- Use appropriate arrow directions based on data flow
+
+Generate a clean, single-line HTML with these styles applied as inline CSS. Include proper layer labels, component labels, and descriptions. Use arrows to show relationships between components and layers. No comments or additional text in the output.
+'''
+
+def extract_text_from_pdf(pdf_content: bytes) -> str:
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        logger.error(f"Error extracting text from PDF: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to process PDF document")
+
+def extract_text_from_docx(docx_content: bytes) -> str:
+    try:
+        doc = docx.Document(io.BytesIO(docx_content))
+        return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+    except Exception as e:
+        logger.error(f"Error extracting text from DOCX: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to process DOCX document")
+
+def extract_text_from_markdown(md_content: str) -> str:
+    try:
+        # 移除Markdown语法，保留纯文本
+        html = markdown.markdown(md_content)
+        text = re.sub('<[^<]+?>', '', html)
+        return text
+    except Exception as e:
+        logger.error(f"Error extracting text from Markdown: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to process Markdown document")
+
+async def analyze_document(content: str) -> str:
+    try:
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
+
+        prompt = DOCUMENT_ANALYSIS_PROMPT.format(content=content)
         
-        U->>F: 点击登录
-        F->>B: POST /login
-        activate B
-        B-->>F: 返回token
-        deactivate B
-        F-->>U: 显示成功消息
-    """,
-    
-    DiagramType.FLOWCHART: """
-    请根据以下描述生成一个流程图的Mermaid.js代码。
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a system architect specialized in analyzing documents and extracting architecture information."
+                        },
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                },
+                timeout=60
+            )
 
-    描述:
-    {description}
+            if response.status_code != 200:
+                logger.error(f"API error during document analysis: {response.status_code} - {response.text}")
+                return None
 
-    要求：
-    1. 使用flowchart TD（自上而下）布局
-    2. 使用以下语法：
-       - 使用[方框]表示普通步骤
-       - 使用[[判断框]]表示判断
-       - 使用([圆角框])表示开始/结束
-       - 使用((圆形))表示连接点
-    3. 使用清晰的箭头和文字说明
-    4. 标注判断条件的是/否分支
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
 
-    示例：
-    flowchart TD
-        A([开始]) --> B[输入用户名密码]
-        B --> C[[验证是否通过]]
-        C -->|是| D[进入系统]
-        C -->|否| B
-        D --> E([结束])
-    """,
-    
-    DiagramType.USECASE: """
-    请根据以下描述生成一个用例图的Mermaid.js代码。
+    except Exception as e:
+        logger.error(f"Error analyzing document: {str(e)}")
+        return None
 
-    描述:
-    {description}
+async def make_api_request(client: httpx.AsyncClient, api_key: str, prompt: str, timeout: float) -> Optional[str]:
+    try:
+        response = await client.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are an HTML architecture diagram generator. Output ONLY the HTML code for the diagram, without any explanation, comments, or markdown formatting. The output should be a single HTML string that can be directly injected into a webpage."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 4000
+            },
+            timeout=timeout
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"API error: {response.status_code} - {response.text}")
+            return None
+            
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.error(f"Request error: {str(e)}")
+        return None
 
-    要求：
-    1. 使用flowchart TD布局模拟用例图
-    2. 使用以下语法：
-       - ((圆形))表示用例
-       - [方框]表示角色
-    3. 使用适当的连接表示关系
-    4. 根据需要使用subgraph分组
+@app.post("/analyze-document")
+async def process_document(request: DocumentAnalysisRequest):
+    try:
+        logger.info(f"Received document analysis request - Type: {request.doc_type}")
+        
+        # 根据文档类型提取文本
+        if request.doc_type == "markdown":
+            content = extract_text_from_markdown(request.content)
+        else:  # 默认作为纯文本处理
+            content = request.content
+            
+        # 分析文档内容
+        analysis_result = await analyze_document(content)
+        if not analysis_result:
+            raise HTTPException(status_code=500, detail="Failed to analyze document")
+            
+        # 基于分析结果生成架构图
+        diagram_request = DiagramRequest(description=analysis_result)
+        return await generate_diagram(diagram_request)
+        
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    示例：
-    flowchart TD
-        subgraph 系统边界
-            A((登录))
-            B((查询订单))
-            C((修改订单))
-        end
-        U[用户] --> A
-        U --> B
-        U --> C
-    """,
-    
-    DiagramType.ER: """
-    请根据以下描述生成一个ER图的Mermaid.js代码。
-
-    描述:
-    {description}
-
-    要求：
-    1. 使用erDiagram语法
-    2. 清晰展示实体之间的关系
-    3. 标注关系的类型（一对一、一对多、多对多）
-    4. 列出主要属性
-
-    示例：
-    erDiagram
-        USER ||--o{ ORDER : places
-        USER {
-            string id
-            string name
-            string email
-        }
-        ORDER {
-            string id
-            date created_at
-            float amount
-        }
-    """,
-    
-    DiagramType.CLASS: """
-    请根据以下描述生成一个类图的Mermaid.js代码。
-
-    描述:
-    {description}
-
-    要求：
-    1. 使用classDiagram语法
-    2. 包含类的属性和方法
-    3. 标注访问修饰符
-    4. 展示类之间的关系（继承、实现、关联等）
-
-    示例：
-    classDiagram
-        class Animal {
-            +String name
-            +int age
-            +makeSound()
-        }
-        class Dog {
-            +String breed
-            +bark()
-        }
-        Animal <|-- Dog
-    """
-}
+@app.post("/upload-document")
+async def upload_document(file: UploadFile = File(...)):
+    try:
+        logger.info(f"Received document upload: {file.filename}")
+        
+        content = await file.read()
+        file_extension = file.filename.lower().split('.')[-1]
+        
+        # 根据文件类型提取文本
+        if file_extension == 'pdf':
+            text_content = extract_text_from_pdf(content)
+        elif file_extension in ['docx', 'doc']:
+            text_content = extract_text_from_docx(content)
+        elif file_extension in ['md', 'markdown']:
+            text_content = extract_text_from_markdown(content.decode())
+        else:
+            text_content = content.decode()
+            
+        # 分析文档并生成架构图
+        analysis_request = DocumentAnalysisRequest(content=text_content, doc_type=file_extension)
+        return await process_document(analysis_request)
+        
+    except Exception as e:
+        logger.error(f"Error processing uploaded document: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate-diagram")
 async def generate_diagram(request: DiagramRequest):
     try:
-        logger.info(f"Received request for {request.type} diagram")
-        html = await generate_diagram_html(request.type, request.description)
-        return {"html": html}
+        logger.info("Received request for architecture diagram")
+        
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
+        
+        prompt = ARCHITECTURE_PROMPT.format(description=request.description)
+        
+        # 使用递增的超时时间重试
+        timeout = INITIAL_TIMEOUT
+        html_content = None
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                logger.info(f"Attempt {attempt + 1}/{MAX_RETRIES} with timeout {timeout}s")
+                async with httpx.AsyncClient() as client:
+                    html_content = await make_api_request(client, api_key, prompt, timeout)
+                    if html_content:
+                        break
+                    
+                # 如果失败，增加超时时间并等待后重试
+                timeout = min(timeout * 1.5, MAX_TIMEOUT)
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(2)
+                    
+            except Exception as e:
+                logger.error(f"Error in attempt {attempt + 1}: {str(e)}")
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(2)
+                else:
+                    raise
+        
+        if not html_content:
+            raise HTTPException(status_code=500, detail="Failed to generate diagram after multiple attempts")
+            
+        return {"html": html_content}
+            
     except Exception as e:
         logger.error(f"Error generating diagram: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-async def generate_diagram_html(diagram_type: DiagramType, description: str):
-    max_attempts = 3
-    wait_seconds = 2
-    
-    for attempt in range(max_attempts):
-        try:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            if not api_key:
-                logger.error("DEEPSEEK_API_KEY not found in environment variables")
-                raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
-            
-            logger.info(f"Making request to DeepSeek API (attempt {attempt + 1}/{max_attempts})...")
-            
-            # 获取对应类型的提示词模板
-            prompt_template = DIAGRAM_PROMPTS.get(diagram_type)
-            if not prompt_template:
-                raise ValueError(f"Unsupported diagram type: {diagram_type}")
-            
-            # 填充提示词模板
-            prompt = prompt_template.format(description=description)
-            
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                logger.info("Sending request to DeepSeek API...")
-                response = await client.post(
-                    "https://api.deepseek.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "deepseek-chat",
-                        "messages": [
-                            {
-                                "role": "system", 
-                                "content": "You are an expert at creating diagrams using Mermaid.js. Always generate clean, valid Mermaid.js code without any HTML tags or markdown formatting."
-                            },
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.7,
-                        "max_tokens": 4000
-                    }
-                )
-                
-                logger.info(f"DeepSeek API response status: {response.status_code}")
-                
-                if response.status_code != 200:
-                    error_text = response.text
-                    logger.error(f"API error: {response.status_code} {error_text}")
-                    raise HTTPException(status_code=response.status_code, detail=error_text)
-                
-                data = response.json()
-                logger.info("Successfully received response from DeepSeek API")
-                mermaid_code = data["choices"][0]["message"]["content"]
-                
-                # 清理代码，移除可能的markdown代码块标记
-                mermaid_code = mermaid_code.replace("```mermaid", "").replace("```", "").strip()
-                
-                # 构建完整的HTML
-                safe_html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-                    <script>
-                        document.addEventListener('DOMContentLoaded', function() {
-                            mermaid.initialize({
-                                startOnLoad: true,
-                                theme: 'default',
-                                flowchart: {
-                                    useMaxWidth: false,
-                                    htmlLabels: true,
-                                    curve: 'basis'
-                                },
-                                sequence: {
-                                    showSequenceNumbers: true,
-                                    boxMargin: 5
-                                },
-                                er: {
-                                    layoutDirection: 'TB',
-                                    entityPadding: 15
-                                },
-                                class: {
-                                    useMaxWidth: false
-                                }
-                            });
-                        });
-                    </script>
-                    <style>
-                        .mermaid {
-                            text-align: center;
-                            padding: 20px;
-                            background-color: white;
-                        }
-                        .mermaid svg {
-                            max-width: 100%;
-                            height: auto;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="mermaid">
-                    """ + mermaid_code + """
-                    </div>
-                </body>
-                </html>
-                """
-                
-                logger.info("Processed HTML content for diagram")
-                return safe_html
-                
-        except Exception as e:
-            logger.error(f"Error in generate_diagram_html (attempt {attempt + 1}/{max_attempts}): {str(e)}", exc_info=True)
-            if attempt < max_attempts - 1:
-                logger.info(f"Retrying in {wait_seconds} seconds...")
-                await asyncio.sleep(wait_seconds)
-            else:
-                logger.error("Max retry attempts reached, giving up")
-                raise
 
 @app.get("/health")
 async def health_check():

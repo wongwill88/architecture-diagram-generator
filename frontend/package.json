@@ -11,6 +11,7 @@
     "axios": "^1.6.2",
     "element-plus": "^2.9.7",
     "html2canvas": "^1.4.1",
+    "mermaid": "^11.6.0",
     "vue": "^3.3.4"
   },
   "devDependencies": {
