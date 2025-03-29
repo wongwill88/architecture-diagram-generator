@@ -7,6 +7,7 @@ import asyncio
 from dotenv import load_dotenv
 import logging
 import re
+from enum import Enum
 
 # 加载环境变量
 load_dotenv()
@@ -14,6 +15,18 @@ load_dotenv()
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class DiagramType(str, Enum):
+    ARCHITECTURE = "architecture"
+    SEQUENCE = "sequence"
+    FLOWCHART = "flowchart"
+    USECASE = "usecase"
+    ER = "er"
+    CLASS = "class"
+
+class DiagramRequest(BaseModel):
+    type: DiagramType
+    description: str
 
 app = FastAPI()
 
@@ -26,26 +39,179 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class DiagramRequest(BaseModel):
-    description: str
+DIAGRAM_PROMPTS = {
+    DiagramType.ARCHITECTURE: """
+    请根据以下系统描述生成一个架构图的Mermaid.js代码。
 
-# 确保路由定义正确
+    系统描述:
+    {description}
+
+    要求：
+    1. 使用flowchart LR（从左到右）布局
+    2. 使用以下语法：
+       - 使用[方框]表示主要组件
+       - 使用([圆角框])表示服务
+       - 使用[(圆柱体)]表示数据库
+       - 使用>六边形]表示外部系统
+    3. 使用subgraph对相关组件进行分组
+    4. 使用合适的连接线和说明文字
+
+    示例：
+    flowchart LR
+        subgraph Frontend
+            A[Web App]
+        end
+        subgraph Backend
+            B([API Server])
+            C[(Database)]
+        end
+        A -->|HTTP| B
+        B -->|Query| C
+    """,
+    
+    DiagramType.SEQUENCE: """
+    请根据以下描述生成一个时序图的Mermaid.js代码。
+
+    描述:
+    {description}
+
+    要求：
+    1. 使用sequenceDiagram语法
+    2. 清晰展示参与者之间的交互顺序
+    3. 使用适当的箭头类型（->>, -->, -x）
+    4. 添加必要的说明文字
+    5. 使用activate/deactivate表示活动状态
+
+    示例：
+    sequenceDiagram
+        participant U as User
+        participant F as Frontend
+        participant B as Backend
+        
+        U->>F: 点击登录
+        F->>B: POST /login
+        activate B
+        B-->>F: 返回token
+        deactivate B
+        F-->>U: 显示成功消息
+    """,
+    
+    DiagramType.FLOWCHART: """
+    请根据以下描述生成一个流程图的Mermaid.js代码。
+
+    描述:
+    {description}
+
+    要求：
+    1. 使用flowchart TD（自上而下）布局
+    2. 使用以下语法：
+       - 使用[方框]表示普通步骤
+       - 使用[[判断框]]表示判断
+       - 使用([圆角框])表示开始/结束
+       - 使用((圆形))表示连接点
+    3. 使用清晰的箭头和文字说明
+    4. 标注判断条件的是/否分支
+
+    示例：
+    flowchart TD
+        A([开始]) --> B[输入用户名密码]
+        B --> C[[验证是否通过]]
+        C -->|是| D[进入系统]
+        C -->|否| B
+        D --> E([结束])
+    """,
+    
+    DiagramType.USECASE: """
+    请根据以下描述生成一个用例图的Mermaid.js代码。
+
+    描述:
+    {description}
+
+    要求：
+    1. 使用flowchart TD布局模拟用例图
+    2. 使用以下语法：
+       - ((圆形))表示用例
+       - [方框]表示角色
+    3. 使用适当的连接表示关系
+    4. 根据需要使用subgraph分组
+
+    示例：
+    flowchart TD
+        subgraph 系统边界
+            A((登录))
+            B((查询订单))
+            C((修改订单))
+        end
+        U[用户] --> A
+        U --> B
+        U --> C
+    """,
+    
+    DiagramType.ER: """
+    请根据以下描述生成一个ER图的Mermaid.js代码。
+
+    描述:
+    {description}
+
+    要求：
+    1. 使用erDiagram语法
+    2. 清晰展示实体之间的关系
+    3. 标注关系的类型（一对一、一对多、多对多）
+    4. 列出主要属性
+
+    示例：
+    erDiagram
+        USER ||--o{ ORDER : places
+        USER {
+            string id
+            string name
+            string email
+        }
+        ORDER {
+            string id
+            date created_at
+            float amount
+        }
+    """,
+    
+    DiagramType.CLASS: """
+    请根据以下描述生成一个类图的Mermaid.js代码。
+
+    描述:
+    {description}
+
+    要求：
+    1. 使用classDiagram语法
+    2. 包含类的属性和方法
+    3. 标注访问修饰符
+    4. 展示类之间的关系（继承、实现、关联等）
+
+    示例：
+    classDiagram
+        class Animal {
+            +String name
+            +int age
+            +makeSound()
+        }
+        class Dog {
+            +String breed
+            +bark()
+        }
+        Animal <|-- Dog
+    """
+}
+
 @app.post("/generate-diagram")
 async def generate_diagram(request: DiagramRequest):
     try:
-        logger.info(f"Received request with description: {request.description[:50]}...")
-        html = await generate_diagram_html(request.description)
+        logger.info(f"Received request for {request.type} diagram")
+        html = await generate_diagram_html(request.type, request.description)
         return {"html": html}
     except Exception as e:
         logger.error(f"Error generating diagram: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# 添加一个别名路由，以防前端使用不同的路径
-@app.post("/generate")
-async def generate(request: DiagramRequest):
-    return await generate_diagram(request)
-
-async def generate_diagram_html(description: str):
+async def generate_diagram_html(diagram_type: DiagramType, description: str):
     max_attempts = 3
     wait_seconds = 2
     
@@ -58,37 +224,13 @@ async def generate_diagram_html(description: str):
             
             logger.info(f"Making request to DeepSeek API (attempt {attempt + 1}/{max_attempts})...")
             
-            prompt = """
-            请根据以下系统架构描述，生成一个美观的架构图的HTML代码。
-            使用mermaid.js语法，风格要简洁现代。
-
-            系统架构描述:
-            """ + description + """
-
-            请只返回可以直接嵌入网页的HTML代码，包含完整的mermaid.js引用和图表定义。
-            HTML代码应该包含以下元素:
-            1. mermaid.js的CDN引用
-            2. 一个带有'mermaid'类的div元素，其中包含图表定义
-            3. 初始化mermaid的脚本
-
-            示例格式:
-            ```html
-            <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-            <script>
-              mermaid.initialize({
-                startOnLoad: true,
-                theme: 'default'
-              });
-            </script>
-            <div class="mermaid">
-              graph TD
-                A[前端] --> B[后端]
-                B --> C[数据库]
-            </div>
-            ```
-
-            不要包含任何解释或其他文本，只返回HTML代码。
-            """
+            # 获取对应类型的提示词模板
+            prompt_template = DIAGRAM_PROMPTS.get(diagram_type)
+            if not prompt_template:
+                raise ValueError(f"Unsupported diagram type: {diagram_type}")
+            
+            # 填充提示词模板
+            prompt = prompt_template.format(description=description)
             
             async with httpx.AsyncClient(timeout=60.0) as client:
                 logger.info("Sending request to DeepSeek API...")
@@ -101,7 +243,10 @@ async def generate_diagram_html(description: str):
                     json={
                         "model": "deepseek-chat",
                         "messages": [
-                            {"role": "system", "content": "You are a helpful assistant that generates architecture diagrams using mermaid.js."},
+                            {
+                                "role": "system", 
+                                "content": "You are an expert at creating diagrams using Mermaid.js. Always generate clean, valid Mermaid.js code without any HTML tags or markdown formatting."
+                            },
                             {"role": "user", "content": prompt}
                         ],
                         "temperature": 0.7,
@@ -118,47 +263,58 @@ async def generate_diagram_html(description: str):
                 
                 data = response.json()
                 logger.info("Successfully received response from DeepSeek API")
-                html_content = data["choices"][0]["message"]["content"]
+                mermaid_code = data["choices"][0]["message"]["content"]
                 
-                # 清理HTML，确保它只包含必要的代码
-                html_content = html_content.replace("```html", "").replace("```", "").strip()
+                # 清理代码，移除可能的markdown代码块标记
+                mermaid_code = mermaid_code.replace("```mermaid", "").replace("```", "").strip()
                 
-                # 构建一个完整的、安全的HTML
+                # 构建完整的HTML
                 safe_html = """
                 <!DOCTYPE html>
                 <html>
                 <head>
+                    <meta charset="UTF-8">
                     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
                     <script>
                         document.addEventListener('DOMContentLoaded', function() {
                             mermaid.initialize({
                                 startOnLoad: true,
-                                theme: 'default'
+                                theme: 'default',
+                                flowchart: {
+                                    useMaxWidth: false,
+                                    htmlLabels: true,
+                                    curve: 'basis'
+                                },
+                                sequence: {
+                                    showSequenceNumbers: true,
+                                    boxMargin: 5
+                                },
+                                er: {
+                                    layoutDirection: 'TB',
+                                    entityPadding: 15
+                                },
+                                class: {
+                                    useMaxWidth: false
+                                }
                             });
                         });
                     </script>
+                    <style>
+                        .mermaid {
+                            text-align: center;
+                            padding: 20px;
+                            background-color: white;
+                        }
+                        .mermaid svg {
+                            max-width: 100%;
+                            height: auto;
+                        }
+                    </style>
                 </head>
                 <body>
-                """
-                
-                # 尝试提取mermaid图表定义
-                import re
-                mermaid_div = re.search(r'<div\s+class=["\']mermaid["\'][^>]*>(.*?)</div>', html_content, re.DOTALL)
-                
-                if mermaid_div:
-                    # 如果找到了mermaid div，直接使用它
-                    safe_html += mermaid_div.group(0)
-                else:
-                    # 否则尝试提取图表定义
-                    graph_match = re.search(r'(graph\s+[A-Z]+.+|flowchart\s+[A-Z]+.+|sequenceDiagram.+|classDiagram.+)', html_content, re.DOTALL)
-                    if graph_match:
-                        graph_def = graph_match.group(0)
-                        safe_html += '<div class="mermaid">\n' + graph_def + '\n</div>'
-                    else:
-                        # 如果无法提取，使用原始内容
-                        safe_html += '<div class="mermaid">\n' + html_content + '\n</div>'
-                
-                safe_html += """
+                    <div class="mermaid">
+                    """ + mermaid_code + """
+                    </div>
                 </body>
                 </html>
                 """

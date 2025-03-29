@@ -2,7 +2,7 @@
   <el-card class="input-section" shadow="hover">
     <template #header>
       <div class="card-header">
-        <span>系统架构描述</span>
+        <span>系统描述</span>
         <div class="example-buttons">
           <el-button type="primary" plain size="small" @click="loadExample('simple')">
             简单示例
@@ -13,28 +13,37 @@
         </div>
       </div>
     </template>
-    
+
     <el-form>
-      <el-form-item>
+      <el-form-item label="图表类型">
+        <el-select v-model="diagramType" placeholder="请选择图表类型" style="width: 100%">
+          <el-option label="架构图" value="architecture" />
+          <el-option label="时序图" value="sequence" />
+          <el-option label="流程图" value="flowchart" />
+          <el-option label="用例图" value="usecase" />
+          <el-option label="ER图" value="er" />
+          <el-option label="类图" value="class" />
+        </el-select>
+      </el-form-item>
+
+      <el-form-item label="描述内容">
         <el-input
           v-model="description"
           type="textarea"
-          :rows="10"
-          placeholder="请输入系统架构描述，例如：系统包含一个前端应用，使用Vue.js开发，通过REST API与后端服务通信..."
-          resize="none"
+          :rows="8"
+          placeholder="请输入系统描述..."
+          resize="vertical"
         />
       </el-form-item>
-      
+
       <el-form-item>
         <el-button 
           type="primary" 
-          :loading="isLoading" 
-          @click="generateDiagram"
-          :disabled="!description.trim()"
-          size="large"
+          @click="handleGenerate" 
+          :loading="isLoading"
           style="width: 100%"
         >
-          {{ isLoading ? '生成中...' : '生成架构图' }}
+          生成图表
         </el-button>
       </el-form-item>
     </el-form>
@@ -42,37 +51,47 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
-const props = defineProps({
-  isLoading: {
-    type: Boolean,
-    default: false
-  },
-  exampleText: {
-    type: String,
-    default: ''
-  }
-})
-
-const emit = defineEmits(['generate', 'load-example'])
 const description = ref('')
+const diagramType = ref('architecture')
+const isLoading = ref(false)
 
-watch(() => props.exampleText, (newValue) => {
-  if (newValue) {
-    description.value = newValue
-  }
-})
+const emit = defineEmits(['generate'])
 
-const generateDiagram = () => {
-  if (description.value.trim()) {
-    emit('generate', description.value)
+const examples = {
+  simple: {
+    type: 'architecture',
+    description: '一个简单的网站系统，包含前端、后端API和数据库三个主要组件。'
+  },
+  complex: {
+    type: 'architecture',
+    description: '一个电商系统，包含用户服务、订单服务、支付服务、商品服务、库存服务，以及对应的数据库。服务之间通过消息队列通信。'
   }
 }
 
 const loadExample = (type) => {
-  emit('load-example', type)
+  const example = examples[type]
+  description.value = example.description
+  diagramType.value = example.type
 }
+
+const handleGenerate = () => {
+  if (!description.value.trim()) {
+    ElMessage.warning('请输入系统描述')
+    return
+  }
+  
+  emit('generate', {
+    type: diagramType.value,
+    description: description.value
+  })
+}
+
+defineExpose({
+  isLoading
+})
 </script>
 
 <style scoped>

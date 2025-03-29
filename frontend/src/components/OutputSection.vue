@@ -25,13 +25,13 @@
         <el-empty description="输入系统架构描述并点击生成按钮" />
       </div>
       
-      <div v-else ref="diagramRef" class="diagram-content" v-html="diagramHtml"></div>
+      <div v-else ref="diagramRef" class="diagram-content" v-html="sanitizedHtml"></div>
     </div>
   </el-card>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import html2canvas from 'html2canvas'
@@ -49,13 +49,79 @@ const props = defineProps({
 
 const diagramRef = ref(null)
 
+// 计算属性，处理HTML内容
+const sanitizedHtml = computed(() => {
+  if (!props.diagramHtml) return ''
+  return props.diagramHtml
+})
+
+// 监听HTML变化，初始化mermaid
+watch(() => props.diagramHtml, (newVal) => {
+  if (newVal) {
+    // 使用setTimeout确保DOM已更新
+    setTimeout(() => {
+      if (window.mermaid) {
+        try {
+          window.mermaid.init(undefined, document.querySelectorAll('.mermaid'))
+        } catch (error) {
+          console.error('Mermaid initialization error:', error)
+        }
+      }
+    }, 100)
+  }
+})
+
+// 组件挂载时加载mermaid.js
+onMounted(() => {
+  if (!window.mermaid) {
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js'
+    script.onload = () => {
+      window.mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        flowchart: {
+          useMaxWidth: false,
+          htmlLabels: true,
+          curve: 'basis'
+        }
+      })
+      
+      if (props.diagramHtml) {
+        setTimeout(() => {
+          try {
+            window.mermaid.init(undefined, document.querySelectorAll('.mermaid'))
+          } catch (error) {
+            console.error('Mermaid initialization error:', error)
+          }
+        }, 100)
+      }
+    }
+    document.head.appendChild(script)
+  }
+})
+
 const exportImage = async () => {
   if (!diagramRef.value) return
   
   try {
+    // 确保mermaid图表已完全渲染
+    if (window.mermaid) {
+      try {
+        await window.mermaid.init(undefined, document.querySelectorAll('.mermaid'))
+      } catch (error) {
+        console.error('Mermaid initialization error during export:', error)
+      }
+    }
+    
+    // 等待一小段时间确保渲染完成
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
     const canvas = await html2canvas(diagramRef.value, {
       backgroundColor: '#ffffff',
-      scale: 2
+      scale: 2,
+      logging: false,
+      useCORS: true
     })
     
     const link = document.createElement('a')
